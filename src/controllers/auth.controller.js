@@ -28,6 +28,9 @@ module.exports.Register = async (req, res) => {
   const token = jwt.sign({ id: user._id }, config.JWT_SECRET, {
     expiresIn: "1h",
   });
+
+  res.cookie("token", token);
+
   res.status(201).json({
     message: "user register successfully",
     user: {
@@ -38,7 +41,6 @@ module.exports.Register = async (req, res) => {
     token,
   });
 
-  req.cookie("token", token);
 };
 
 module.exports.Login = async (req, res) => {
@@ -54,15 +56,18 @@ module.exports.Login = async (req, res) => {
   }
 
   const isPasswordMatch = await bcrypt.compare(password, user.password);
+  
   if (!isPasswordMatch) {
     res.status(401).json({
       message: "Invalid credentials",
     });
   }
-
+  
   const token = jwt.sign({ id: user._id }, config.JWT_SECRET, {
     expiresIn: "1h",
   });
+
+
   res.status(200).json({
     message: "Login successful",
     user: {
@@ -73,3 +78,26 @@ module.exports.Login = async (req, res) => {
     token,
   });
 };
+
+module.exports.getme = async(req,res)=>{
+  const token  =  req.headers.authorization?.split(" ")[1];
+  
+  if(!token){
+    return res.status(401).json({message:"Unauthorized"})
+  }
+
+  const decode = jwt.verify(token,config.JWT_SECRET);
+  
+  const user = await userModel.findById(decode.id)
+
+  res.status(200).json({
+    message:"User fetched successfully",
+    user:{
+      id:user._id,
+      username:user.username,
+      email:user.email
+    }
+  })
+  
+
+}

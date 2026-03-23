@@ -4,5 +4,5 @@ const controllers = require("../controllers/auth.controller");
 
 router.post("/register",controllers.Register)
 router.post("/login",controllers.Login)
-
+router.get("/getme",controllers.getme)
 module.exports = router;
