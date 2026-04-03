@@ -1,7 +1,9 @@
 const userModel = require("../models/user.model");
+const sessionModel = require('../models/user.session')
 const config = require("../db/config");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 
 module.exports.Register = async (req, res) => {
   let { username, email, password } = req.body;
@@ -13,6 +15,7 @@ module.exports.Register = async (req, res) => {
   let isAlreadyRegister = await userModel.findOne({
     $or: [{ username }, { email }],
   });
+
   if (isAlreadyRegister) {
     res.status(409).json({ message: "Username or email alredy exist" });
   }
@@ -23,14 +26,28 @@ module.exports.Register = async (req, res) => {
     username,
     password: hashedPass,
   });
+
   await user.save();
 
-  const accessToken = jwt.sign({ id: user._id }, config.JWT_SECRET, {
-    expiresIn: "15m",
-  });
   const refreshToken = jwt.sign({ id: user._id }, config.JWT_SECRET, {
     expiresIn: "7d",
   });
+  
+  const refreshTokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+  const session = new sessionModel({
+    userId:user._id,
+    refreshTokenHash,
+    ipAddress:req.ip,
+    userAgent:req.headers["user-agent"]
+  });
+  await session.save();
+  
+  const accessToken = jwt.sign({ id: user._id,
+    sessionId:session._id
+   }, config.JWT_SECRET, {
+    expiresIn: "15m",
+  });
+
 
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
@@ -140,3 +157,8 @@ module.exports.refreshToken = async (req, res) => {
     return res.status(404).json({ message: "User not found" });
   }
 };
+
+module.exports.logout = async(req,res)=>{
+  const {refreshToken }= req.cookies;
+
+}
