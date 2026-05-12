@@ -6,69 +6,79 @@ const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 
 module.exports.Register = async (req, res) => {
-  let { username, email, password } = req.body;
+  try {
+    let { username, email, password } = req.body;
 
-  if (!password || !email || !username) {
-    return res.status(401).json({ message: "All fields are required" });
+    if (!password || !email || !username) {
+      return res.status(401).json({ message: "All fields are required" });
+    }
+
+    let isAlreadyRegister = await userModel.findOne({
+      $or: [{ username }, { email }],
+    });
+
+    if (isAlreadyRegister) {
+      return res
+        .status(409)
+        .json({ message: "Username or email alredy exist" });
+    }
+
+    const hashedPass = await bcrypt.hash(password, 10);
+    const user = new userModel({
+      email,
+      username,
+      password: hashedPass,
+    });
+    await user.save();
+
+    const refreshToken = jwt.sign({ id: user._id }, config.JWT_SECRET, {
+      expiresIn: "7d",
+    });
+
+    const refreshTokenHash = crypto
+      .createHash("sha256")
+      .update(refreshToken)
+      .digest("hex");
+    const session = new sessionModel({
+      userId: user._id,
+      refreshTokenHash,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+    await session.save();
+
+    const accessToken = jwt.sign(
+      { id: user._id, sessionId: session._id },
+      config.JWT_SECRET,
+      {
+        expiresIn: "15m",
+      },
+    );
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    return res.status(201).json({
+      message: "user register successfully",
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+      },
+      accessToken,
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({ message: "User already exists" });
+    }
+    return res.status(500).json({
+      message: error.message,
+    });
   }
-
-  let isAlreadyRegister = await userModel.findOne({
-    $or: [{ username }, { email }],
-  });
-
-  if (isAlreadyRegister) {
-    res.status(409).json({ message: "Username or email alredy exist" });
-  }
-
-  const hashedPass = await bcrypt.hash(password, 10);
-  const user = new userModel({
-    email,
-    username,
-    password: hashedPass,
-  });
-
-  await user.save();
-
-  const refreshToken = jwt.sign({ id: user._id }, config.JWT_SECRET, {
-    expiresIn: "7d",
-  });
-
-  const refreshTokenHash = crypto
-    .createHash("sha256")
-    .update(refreshToken)
-    .digest("hex");
-  const session = new sessionModel({
-    userId: user._id,
-    refreshTokenHash,
-    ipAddress: req.ip,
-    userAgent: req.headers["user-agent"],
-  });
-  await session.save();
-
-  const accessToken = jwt.sign(
-    { id: user._id, sessionId: session._id },
-    config.JWT_SECRET,
-    {
-      expiresIn: "15m",
-    },
-  );
-
-  res.cookie("refreshToken", refreshToken, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "strict",
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-  });
-
-  res.status(201).json({
-    message: "user register successfully",
-    user: {
-      id: user._id,
-      username: user.username,
-      email: user.email,
-    },
-    accessToken,
-  });
 };
 
 module.exports.Login = async (req, res) => {
@@ -133,6 +143,17 @@ module.exports.refreshToken = async (req, res) => {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
+  const refreshTokenHash = crypto
+    .createHash("sh256")
+    .update(refreshToken)
+    .digest("hex");
+  const session = await sessionModel.findOne({
+    refreshTokenHash,
+    isRevoked: false,
+  });
+  if (!session) {
+    return res.status(401).json({ message: "Invalid refresh token" });
+  }
   const decode = jwt.verify(refreshToken, config.JWT_SECRET);
   const acessToken = jwt.sign({ id: decode.id }, config.JWT_SECRET, {
     expiresIn: "15m",
@@ -141,6 +162,13 @@ module.exports.refreshToken = async (req, res) => {
   const newRefreshToken = jwt.sign({ id: decode.id }, config.JWT_SECRET, {
     expiresIn: "7d",
   });
+
+  const newrefreshTokenHash = crypto
+    .createHash("sha256")
+    .update(newRefreshToken)
+    .digest("hex");
+  session.newRefreshToken = newrefreshTokenHash;
+  await session.save();
 
   res.cookie("refreshToken", newRefreshToken, {
     httpOnly: true,
